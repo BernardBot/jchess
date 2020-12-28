@@ -1,0 +1,238 @@
+<canvas></canvas>
+<div></div>
+<script>
+  board =
+    "         \n"+
+    "         \n"+
+    " rnbqkbnr\n"+
+    " pppppppp\n"+
+    " ........\n"+
+    " ........\n"+
+    " ........\n"+
+    " ........\n"+
+    " PPPPPPPP\n"+
+    " RNBQKBNR\n"+
+    "         \n"+
+    "         \n";
+
+  dir =
+    {
+	P : [-10, -20, -11, -9],
+	N : [21, 19, 12, 8, -21, -19, -12, -8],
+	B : [11, 9, -11, -9],
+	R : [10, 1, -10, -1],
+	Q : [11, 9, -11, -9, 10, 1, -10, -1],
+	K : [11, 9, -11, -9, 10, 1, -10, -1],
+    };
+
+  value = { "." : 0, p : 100, n : 300, b : 330, r : 500, q : 900, k : 10000};
+  post = [];
+  for (let i = 2; i < 10; i++) {
+      for (let j = 1; j < 10; j++) {
+	  post[10 * i + j] = (i - 6) ** 2 + (j - 4.5) ** 2;
+      }
+  }
+
+  score = 0;
+
+  table = new Map(); // transposition table
+  TABLE_SIZE = 1e7;
+
+  SEARCH_TIME = 500; // milliseconds
+
+  function gen() {
+      let moves = [];
+      for (let i = 21; i < 99; i++) {
+	  let p = board[i];
+	  if ("A" < p && p < "a") {
+	      let r = dir[p];
+	      for (let k = 0; k < r.length; k++) {
+		  let d = r[k];
+		  for (let j = i + d; ; j += d) {
+		      let q = board[j];
+
+		      if (("A" < q && q < "a") || q == " " || q == "\n") break;
+
+		      if (p == "P" && (d == -10 || d == -20) && q != ".") break;
+		      if (p == "P" && (d == -11 || d == -9)  && q == ".") break;
+		      if (p == "P" && d == -20 && (board[i - 10] != "." || i < 81)) break;
+
+		      moves.push({i, j, p, q});
+
+		      if (p == "P" || p == "N" || p == "K" || q != ".") break;
+		  }
+	      }
+	  }
+      }
+      return moves;
+  }
+
+  function domove(move) {
+      board = board.slice(0, move.i) + "."    + board.slice(move.i + 1);
+      board = board.slice(0, move.j) + move.p + board.slice(move.j + 1);
+
+      if (move.p == "P" && move.j < 30) {
+	  board = board.slice(0, move.j) + "Q" + board.slice(move.j + 1);
+	  score += value["q"] - value["p"];
+      }
+
+      score += value[move.q] + post[move.i] - post[move.j];
+  }
+  function flip() {
+      board = board.split("")
+      for (let i = 21; i < 99; i++) {
+	  if      ("A" > board[i]) continue;
+	  else if ("a" < board[i]) board[i] = board[i].toUpperCase();
+	  else                     board[i] = board[i].toLowerCase();
+      }
+      board = board.reverse().join("");
+
+      score = -score
+  }
+
+  // https://en.wikipedia.org/wiki/Negamax#Negamax_with_alpha_beta_pruning
+  function _search(depth, a, b) {
+      let _a = a;
+
+      let e = table.get(board) || {};
+      if (e.depth >= depth) {
+	  if      (e.flag == "EXACT") return e.val;
+	  else if (e.flag == "LOWER") a = Math.max(a, e.val);
+	  else if (e.flag == "UPPER") b = Math.min(b, e.val);
+
+	  if (a >= b) return e.val;
+      }
+
+      if (depth < 1) return score;
+
+      let _board = board;
+      let _score = score;
+
+      let moves = gen().sort((m,n) => value[m.q] < value[n.q]);
+      let val = -Infinity;
+      let best = moves[0];
+      for (let move of moves) {
+	  domove(move);
+	  flip();
+
+	  let t = -_search(depth - 1, -b, -a);
+	  if (t > val) {
+	      best = move;
+	      val = t;
+	      if (val > a) {
+		  a = val;
+	      }
+	  }
+
+	  score = _score;
+	  board = _board;
+
+	  if (a >= b) break;
+      }
+
+      e.val = val;
+      if      (val <= _a) e.flag = "UPPER";
+      else if (val >= b)  e.flag = "LOWER"
+      else                e.flag = "EXACT";
+      e.depth = depth;
+      e.move = best;
+
+      if (table.size > TABLE_SIZE) table.clear();
+      table.set(board, e);
+
+      return val;
+  }
+
+  function search() {
+      let depth = 1;
+      for (let t = Date.now(); Date.now() - t < SEARCH_TIME; depth++) {
+	  _search(depth, -Infinity, Infinity);
+      }
+      return table.get(board).move;
+  }
+
+  // integer to square AND square to integer
+  function i2s(i) {
+      return String.fromCharCode(96 + i % 10) +
+	     String.fromCharCode(58 - (i - i % 10) / 10);
+  }
+  function s2i(s) {
+      return s.charCodeAt(0) - 96 - 10 * (s.charCodeAt(1) - 58);
+  }
+
+  // interactive board
+  d = document.getElementsByTagName("div")[0];
+  c = document.getElementsByTagName("canvas")[0];
+  ctx = c.getContext("2d");
+
+  s = 50;
+
+  c.width = c.height = 8 * s;
+  c.style.float = "left";
+  ctx.font = "40px Arial";
+
+  sym = {K : "♔", Q : "♕", R : "♖", B : "♗", N : "♘", P : "♙",
+	 k : "♚", q : "♛", r : "♜", b : "♝", n : "♞", p : "♟",
+	 "." : " "}
+
+  function drawboard() {
+      ctx.clearRect(0, 0, c.width, c.height);
+      let x = y = 0;
+      for (let r of "87654321") {
+	  for (let f of "abcdefgh") {
+	      let i = s2i(f + r);
+
+	      ctx.fillStyle = (x + y) % 2 ? "lightblue" : "lightgrey"
+	      ctx.fillRect(x * s, y * s, s, s);
+
+	      ctx.fillStyle = "black";
+	      ctx.fillText(sym[board[i]], x * s + s / 5, y * s + s / 1.5);
+
+	      x++;
+	  }
+	  x = 0;
+	  y++;
+      }
+  }
+
+  selected = false;
+  ply = 1;
+  c.addEventListener("mousedown", (event) => {
+      if (selected) {
+	  let i = 21 + Math.floor(clientX / s) +
+	          10 * Math.floor(clientY / s);
+	  let j = 21 + Math.floor(event.clientX / s) +
+	          10 * Math.floor(event.clientY / s);
+
+	  let move = {i, j, p : board[i], q : board[j]};
+
+	  if (gen().some(m => m.i == i && m.j == j)) {
+	      domove(move);
+
+	      drawboard();
+	      d.innerHTML += ply++ + ". " + move.p + i2s(move.j);
+	      flip();
+
+	      move = search()
+
+	      domove(move);
+
+	      flip();
+	      drawboard();
+	      d.innerHTML += " " + move.p + i2s(119 - move.j) + "<br>";
+	  } else {
+	      let t = d.innerHTML;
+	      d.innerHTML = "Illegal Move!";
+	      setTimeout(() => d.innerHTML = t, 500);
+	  }
+
+	  selected = false;
+      } else {
+	  clientX = event.clientX;
+	  clientY = event.clientY;
+	  selected = true;
+      }
+  });
+
+  drawboard();
+  </script>

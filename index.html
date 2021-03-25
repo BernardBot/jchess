@@ -159,13 +159,13 @@
   }
 
   // interactive board
-  d = document.querySelector("div");
-  c = document.querySelector("canvas");
-  ctx = c.getContext("2d");
+  div = document.querySelector("div");
+  canvas = document.querySelector("canvas");
+  ctx = canvas.getContext("2d");
 
   s = 50;
 
-  c.width = c.height = 8 * s;
+  canvas.width = canvas.height = 8 * s;
   ctx.font = s + "px Arial";
 
   sym = {K : "♔", Q : "♕", R : "♖", B : "♗", N : "♘", P : "♙",
@@ -187,25 +187,24 @@
   selected = false;
   ply = 1;
   x = y = -1;
-  c.addEventListener("mousedown", (event) => {
+  canvas.addEventListener("mousedown", (event) => {
       if (selected) {
 	  let i = 21 + Math.floor(      x / s) + 10 * Math.floor(      y / s);
 	  let j = 21 + Math.floor(event.x / s) + 10 * Math.floor(event.y / s);
 
 	  let mymove = {i, j, p : board[i], q : board[j]};
-
 	  if (gen().some(m => m.i == i && m.j == j)) {
 	      domoveandflip(mymove);
 	      cpmove = search();
 	      domoveandflip(cpmove);
-
-	      d.innerHTML += `${ply}. ${mymove.p}${i2s(mymove.j)} ${cpmove.p}${i2s(cpmove.j)}<br>`;
+	      div.innerHTML += `${ply}. ${mymove.p}${i2s(mymove.j)} ${cpmove.p}${i2s(119 - cpmove.j)}<br>`;
 	      drawboard();
 	      ply++;
+	      if (mymove.q == "k" || cpmove.q == "k") alert("GAME OVER");
 	  } else {
-	      let t = d.innerHTML;
-	      d.innerHTML = "Illegal Move!";
-	      setTimeout(() => d.innerHTML = t, 500);
+	      let t = div.innerHTML;
+	      div.innerHTML = "Illegal Move!";
+	      setTimeout(() => div.innerHTML = t, 500);
 	  }
 
 	  selected = false;

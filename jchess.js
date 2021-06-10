@@ -75,7 +75,7 @@ const stepTable = [];
 stepTable[3] = [];
 stepTable[4] = [];
 
-for (var square of squares) {
+for (const square of squares) {
     stepTable[3][square] = [];
     stepTable[4][square] = [];
 
@@ -109,6 +109,54 @@ const castlingRights = [
     0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
 ];
 
+function randomInt(a, b) {
+    return Math.floor(Math.random() * (b - a)) + a;
+}
+
+function randomUInt32() {
+    return randomInt(0, 256) | randomInt(0, 256) << 8 |
+	randomInt(0, 256) << 16 | randomInt(0, 256) << 23;
+}
+
+var zobristKeys = [];
+
+// piece zobrist
+for (const p in pieces) {
+    zobristKeys[pieces[p]] = [];
+    for (const square of squares) {
+	zobristKeys[pieces[p]][square] = randomUInt32();
+    }
+}
+
+// empty and offside
+for (const square of squares) {
+    zobristKeys[0][square] = 0;
+    zobristKeys[32][square] = 0;
+}
+
+// castling zobrist
+zobristKeys[33] = [];
+for (var i = 0; i < 16; i++) {
+    zobristKeys[33][i] = randomUInt32();
+}
+
+// enpassant zobrist
+zobristKeys[34] = [];
+zobristKeys[34][0] = randomUInt32();
+for (const square of squares) {
+    zobristKeys[34][square] = randomUInt32();
+}
+
+function genZobristKey() {
+    // note: zobrist key for color is the color itself
+    g_zobrist = g_us;
+    for (const square of squares) {
+	g_zobrist ^= zobristKeys[g_board[square]][square];
+    }
+    g_zobrist ^= zobristKeys[33][g_castling];
+    g_zobrist ^= zobristKeys[34][g_enpassant];
+}
+
 ////////////////////////////////////////////////////
 // movegen                                        //
 ////////////////////////////////////////////////////
@@ -124,6 +172,7 @@ var g_fullmove;
 
 // derive direction of pawns?
 var g_up;
+var g_zobrist;
 
 function genMoves() {
     var moves = [];
@@ -319,6 +368,12 @@ function isAttacked(i) {
 function makeMove(i, j, tag) {
     var legal = true;
 
+    g_zobrist ^= 24 ^
+	zobristKeys[g_board[i]][i] ^
+	zobristKeys[g_board[j]][j] ^
+	zobristKeys[33][g_castling] ^
+	zobristKeys[34][g_enpassant];
+
     g_board[j] = g_board[i];
     g_board[i] = 0;
 
@@ -330,25 +385,31 @@ function makeMove(i, j, tag) {
 		if (j == g1) {
 		    g_board[h1] = 0;
 		    g_board[f1] = 14;
+		    g_zobrist ^= zobristKeys[14][h1] ^ zobristKeys[14][f1];
 		} else {
 		    g_board[a1] = 0;
 		    g_board[d1] = 14;
+		    g_zobrist ^= zobristKeys[14][a1] ^ zobristKeys[14][d1];
 		}
 	    } else {
 		if (j == g8) {
 		    g_board[h8] = 0;
 		    g_board[f8] = 22;
+		    g_zobrist ^= zobristKeys[22][h8] ^ zobristKeys[22][f8];
 		} else {
 		    g_board[a8] = 0;
 		    g_board[d8] = 22;
+		    g_zobrist ^= zobristKeys[22][a8] ^ zobristKeys[22][d8];
 		}
 	    }
 	} else if (tag == 2) {
+	    g_zobrist ^= zobristKeys[g_board[j - g_up]][j - g_up];
 	    g_board[j - g_up] = 0;
 	} else if (tag == 8) {
 	    g_enpassant = j - g_up;
 	} else {
 	    g_board[j] = tag | g_us;
+	    g_zobrist ^= zobristKeys[1 | g_us][j] ^ zobristKeys[tag | g_us][j];
 	}
     }
 
@@ -366,13 +427,15 @@ function makeMove(i, j, tag) {
 
     g_up = -g_up;
 
+    g_zobrist ^= zobristKeys[g_board[j]][j] ^
+	zobristKeys[33][g_castling] ^
+	zobristKeys[34][g_enpassant];
+
     return legal;
 }
 
-// we need some extra info to undo a move
-function takeMove(i, j, tag, q, castling, enpassant) {
+function takeMove(i, j, tag) {
     g_board[i] = g_board[j];
-    g_board[j] = q;
 
     g_us ^= 24;
     g_them ^= 24;
@@ -380,9 +443,6 @@ function takeMove(i, j, tag, q, castling, enpassant) {
     g_fullmove -= g_us >> 4;
 
     g_up = -g_up;
-
-    g_castling = castling;
-    g_enpassant = enpassant;
 
     if (tag) {
 	if (tag == 1) {
@@ -446,6 +506,8 @@ function parseFen(fen) {
     g_fullmove = parseInt(fullmove) || 1;
 
     g_up = color == "w" ? 10 : -10;
+
+    genZobristKey();
 }
 
 function parseBoard(b) {
@@ -509,19 +571,27 @@ function perft(depth) {
 
     const castling = g_castling;
     const enpassant = g_enpassant;
+    const zobrist = g_zobrist;
 
     const moves = genMoves();
 
     for (k = 0; k < moves.length; k++) {
 	move = moves[k];
+
 	i = move & 127;
 	j = (move >> 7) & 127;
 	tag = (move >> 14) & 15;
 	q = g_board[j];
+
 	if (makeMove(i, j, tag)) {
 	    count += perft(depth - 1);
 	}
-	takeMove(i, j, tag, q, castling, enpassant);
+	takeMove(i, j, tag);
+
+	g_board[j] = q;
+	g_castling = castling;
+	g_enpassant = enpassant;
+	g_zobrist = zobrist;
     }
 
     return count;
@@ -629,17 +699,24 @@ function drawSelectedSquareWithAttacks(selectedSquare) {
 
     const castling = g_castling;
     const enpassant = g_enpassant;
+    const zobrist = g_zobrist;
 
     for (move of genMoves()) {
 	i = move & 127;
 	j = (move >> 7) & 127;
 	tag = (move >> 14) & 127;
 	q = g_board[j];
+
 	if (i == selectedSquare) {
 	    if (makeMove(i, j, tag)) {
 		drawSquare(j, "lightgreen");
 	    }
-	    takeMove(i, j, tag, q, castling, enpassant);
+	    takeMove(i, j, tag);
+
+	    g_board[j] = q;
+	    g_castling = castling;
+	    g_enpassant = enpassant;
+	    g_zobrist = zobrist;
 	}
     }
 }
@@ -664,18 +741,26 @@ function clickedSquare(square) {
 
 	const castling = g_castling;
 	const enpassant = g_enpassant;
+	const zobrist = g_zobrist;
 
 	for (move of genMoves()) {
 	    i = move & 127;
 	    j = (move >> 7) & 127;
 	    tag = (move >> 14) & 15;
 	    q = g_board[j];
+
 	    if (i == selectedSquare && j == square) {
 		// TODO: promotion prompt
+
 		if (makeMove(i, j, tag)) {
 		    break;
 		}
-		takeMove(i, j, tag, q, castling, enpassant);
+		takeMove(i, j, tag);
+
+		g_board[j] = q;
+		g_castling = castling;
+		g_enpassant = enpassant;
+		g_zobrist = zobrist;
 	    }
 	}
 

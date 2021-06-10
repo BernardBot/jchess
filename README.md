@@ -1,2 +1,2 @@
 # jchess
-Sunfish clone in JavaScript
+Chess in JavaScript

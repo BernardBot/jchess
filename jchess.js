@@ -8,9 +8,18 @@
   http://www.bluefeversoft.com/Chess/index.html
   https://home.hccnet.nl/h.g.muller/max-src2.html
 
+  BUGS
+  - g_val bug
+  - bestMove alpha/beta bug
+
   TODO
   - search
-  - zobrist
+    - tpTable
+    - piecePlacement
+    - bestMove
+    - quiesence
+    - mate detection
+    - repetition 
 */
 
 ////////////////////////////////////////////////////
@@ -109,6 +118,7 @@ const castlingRights = [
     0,  0,  0,  0,  0,  0,  0,  0,  0,  0,
 ];
 
+// random number generation for zobrist hashing
 function randomInt(a, b) {
     return Math.floor(Math.random() * (b - a)) + a;
 }
@@ -118,7 +128,7 @@ function randomUInt32() {
 	randomInt(0, 256) << 16 | randomInt(0, 256) << 23;
 }
 
-var zobristKeys = [];
+const zobristKeys = [];
 
 // piece zobrist
 for (const p in pieces) {
@@ -173,6 +183,7 @@ var g_fullmove;
 // derive direction of pawns?
 var g_up;
 var g_zobrist;
+var g_val;
 
 function genMoves() {
     var moves = [];
@@ -365,7 +376,11 @@ function isAttacked(i) {
     return false;
 }
 
-function makeMove(i, j, tag) {
+function makeMove(move) {
+    const i = move & 127;
+    const j = (move >> 7) & 127;
+    const tag = (move >> 14) & 15;
+
     var legal = true;
 
     g_zobrist ^= 24 ^
@@ -373,6 +388,8 @@ function makeMove(i, j, tag) {
 	zobristKeys[g_board[j]][j] ^
 	zobristKeys[33][g_castling] ^
 	zobristKeys[34][g_enpassant];
+
+    g_val += pieceValue[g_board[j] & 7];
 
     g_board[j] = g_board[i];
     g_board[i] = 0;
@@ -405,11 +422,13 @@ function makeMove(i, j, tag) {
 	} else if (tag == 2) {
 	    g_zobrist ^= zobristKeys[g_board[j - g_up]][j - g_up];
 	    g_board[j - g_up] = 0;
+	    g_val += 100;
 	} else if (tag == 8) {
 	    g_enpassant = j - g_up;
 	} else {
 	    g_board[j] = tag | g_us;
 	    g_zobrist ^= zobristKeys[1 | g_us][j] ^ zobristKeys[tag | g_us][j];
+	    g_val += pieceValue[tag] - 100;
 	}
     }
 
@@ -426,6 +445,7 @@ function makeMove(i, j, tag) {
     g_fullmove += g_them >> 4;
 
     g_up = -g_up;
+    g_val = -g_val;
 
     g_zobrist ^= zobristKeys[g_board[j]][j] ^
 	zobristKeys[33][g_castling] ^
@@ -434,7 +454,11 @@ function makeMove(i, j, tag) {
     return legal;
 }
 
-function takeMove(i, j, tag) {
+function takeMove(move, q, castling, enpassant, zobrist, val) {
+    const i = move & 127;
+    const j = (move >> 7) & 127;
+    const tag = (move >> 14) & 15;
+
     g_board[i] = g_board[j];
 
     g_us ^= 24;
@@ -469,20 +493,91 @@ function takeMove(i, j, tag) {
 	    g_board[i] = 1 + g_us;
 	}
     }
+
+    g_board[j] = q;
+    g_castling = castling;
+    g_enpassant = enpassant;
+    g_zobrist = zobrist;
+    g_val = val;
 }
 
 ////////////////////////////////////////////////////
 // search                                         //
 ////////////////////////////////////////////////////
 
+// https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Map
+// const tpTable = new Map(); // map is better as dynamic data type
+
+const pieceValue = [0, 100, 0, 300, 10000, 350, 500, 900];
+
 // TODO...
-function search(depth, alpha, beta) {
+function alphaBeta(depth, alpha, beta) {
+    if (depth < 1) {
+	return g_val;
+    }
+
+    var q;
+    const castling = g_castling;
+    const enpassant = g_enpassant;
+    const zobrist = g_zobrist;
+    const val = g_val;
+
+    const moves = genMoves();
+    var move, k, bestVal = -500001;
+    for (k = 0; k < moves.length; k++) {
+	move = moves[k];
+	q = g_board[(move >> 7) & 127];
+
+	if (makeMove(move)) {
+	    bestVal = Math.max(bestVal, -alphaBeta(depth - 1, -beta, -alpha));
+	    alpha = Math.max(alpha, bestVal);
+	}
+	takeMove(move, q, castling, enpassant, zobrist, val);
+
+	if (alpha >= beta) {
+	    break;
+	}
+    }
+
+    return bestVal;
 }
-function qsearch() {
-}
+
 function bestMove(depth) {
+    console.log("SEARCHING...", g_val);
+    var q;
+    const castling = g_castling;
+    const enpassant = g_enpassant;
+    const zobrist = g_zobrist;
+    const val = g_val;
+
+    const moves = genMoves();
+    var move, k, bestVal = -500001, bestMove, t;
+    for (k = 0; k < moves.length; k++) {
+	move = moves[k];
+	q = g_board[(move >> 7) & 127];
+
+	if (makeMove(move)) {
+	    // WHAT DO I PUT HERE???
+	    t = -alphaBeta(depth - 1, -500000, 500000);
+	    console.log(squareStrings[move & 127], squareStrings[(move >> 7) & 127], t);
+	    if (t > bestVal) {
+		console.log("CHOSEN", squareStrings[move & 127], squareStrings[(move >> 7) & 127], t, "<-", bestVal);
+		bestVal = t;
+		bestMove = move;
+	    }
+	}
+	takeMove(move, q, castling, enpassant, zobrist, val);
+    }
+
+    return bestMove;
 }
-function evaluate() {
+
+function genVal() {
+    g_val = 0;
+    for (const square of squares) {
+	const p = g_board[square];
+	g_val += p & white ? pieceValue[p & 7] : -pieceValue[p & 7];
+    }
 }
 
 ////////////////////////////////////////////////////
@@ -492,6 +587,7 @@ function evaluate() {
 const startFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
 const kiwiFen = "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1";
 const rookEndFen = "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - -";
+const flippedFen = "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR b KQkq - 0 1";
 
 function parseFen(fen) {
     var [board, color, castling, enpassant, halfmove, fullmove] = fen.split(" ");
@@ -508,6 +604,7 @@ function parseFen(fen) {
     g_up = color == "w" ? 10 : -10;
 
     genZobristKey();
+    genVal();
 }
 
 function parseBoard(b) {
@@ -566,32 +663,24 @@ function perft(depth) {
 	return 1;
     }
 
-    var count = 0, k;
-    var move, i, j, tag, q;
+    var count = 0
 
+    var q;
     const castling = g_castling;
     const enpassant = g_enpassant;
     const zobrist = g_zobrist;
+    const val = g_val;
 
     const moves = genMoves();
-
+    var move, k;
     for (k = 0; k < moves.length; k++) {
 	move = moves[k];
+	q = g_board[(move >> 7) & 127];
 
-	i = move & 127;
-	j = (move >> 7) & 127;
-	tag = (move >> 14) & 15;
-	q = g_board[j];
-
-	if (makeMove(i, j, tag)) {
+	if (makeMove(move)) {
 	    count += perft(depth - 1);
 	}
-	takeMove(i, j, tag);
-
-	g_board[j] = q;
-	g_castling = castling;
-	g_enpassant = enpassant;
-	g_zobrist = zobrist;
+	takeMove(move, q, castling, enpassant, zobrist, val);
     }
 
     return count;
@@ -650,15 +739,7 @@ const squareSize = 50;
 canvas.width = canvas.height = 8 * squareSize;
 ctx.font = squareSize + "px Arial";
 
-const unicodes = {};
-unicodes[pieces.P] = "♙"; unicodes[pieces.p] = "♟";
-unicodes[pieces.N] = "♘"; unicodes[pieces.n] = "♞";
-unicodes[pieces.B] = "♗"; unicodes[pieces.b] = "♝";
-unicodes[pieces.R] = "♖"; unicodes[pieces.r] = "♜";
-unicodes[pieces.Q] = "♕"; unicodes[pieces.q] = "♛";
-unicodes[pieces.K] = "♔"; unicodes[pieces.k] = "♚";
-unicodes[0] = "";
-unicodes[32] = "";
+const unicodes = " ????????♙?♘♔♗♖♕?♟?♞♚♝♜♛";
 
 function coordinatesToIndex(x, y) {
     return 21 + x + (7 - y) * 10;
@@ -676,13 +757,13 @@ function drawSquare(i, fillStyle) {
 function drawPiece(i, piece) {
     const [x, y] = indexToCoordinates(i);
     ctx.fillStyle = "black";
-    ctx.fillText(unicodes[piece], squareSize * x, squareSize * 0.8 + squareSize * y);
+    ctx.fillText(unicodes[piece], squareSize * x, squareSize * 0.90 + squareSize * y);
 }
 
 function drawGrid() {
     for (var i of squares) {
 	const [x, y] = indexToCoordinates(i);
-	drawSquare(i, (x + y) % 2 ? "brown" : "yellow");
+	drawSquare(i, (x + y) % 2 ? "white" : "lightblue");
     }
 }
 
@@ -694,33 +775,30 @@ function drawPieces() {
 
 function drawSelectedSquareWithAttacks(selectedSquare) {
     drawSquare(selectedSquare, "grey");
-    // idiom for doing something with movegen
+
     var move, i, j, tag, q;
 
     const castling = g_castling;
     const enpassant = g_enpassant;
     const zobrist = g_zobrist;
+    const val = g_val;
 
     for (move of genMoves()) {
 	i = move & 127;
 	j = (move >> 7) & 127;
-	tag = (move >> 14) & 127;
+	tag = (move >> 14) & 15;
 	q = g_board[j];
 
 	if (i == selectedSquare) {
-	    if (makeMove(i, j, tag)) {
+	    if (makeMove(move)) {
 		drawSquare(j, "lightgreen");
 	    }
-	    takeMove(i, j, tag);
-
-	    g_board[j] = q;
-	    g_castling = castling;
-	    g_enpassant = enpassant;
-	    g_zobrist = zobrist;
+	    takeMove(move, q, castling, enpassant, zobrist, val);
 	}
     }
 }
 
+canvas.style.border = "1px solid black";
 canvas.oncontextmenu = event => event.preventDefault();
 canvas.addEventListener("mousedown", event => {
     const x = Math.floor(event.x / squareSize);
@@ -742,6 +820,7 @@ function clickedSquare(square) {
 	const castling = g_castling;
 	const enpassant = g_enpassant;
 	const zobrist = g_zobrist;
+	const val = g_val;
 
 	for (move of genMoves()) {
 	    i = move & 127;
@@ -751,16 +830,14 @@ function clickedSquare(square) {
 
 	    if (i == selectedSquare && j == square) {
 		// TODO: promotion prompt
-
-		if (makeMove(i, j, tag)) {
+		if (makeMove(move)) {
+		    move = bestMove(5);
+		    if (move) {
+			makeMove(move);
+		    }
 		    break;
 		}
-		takeMove(i, j, tag);
-
-		g_board[j] = q;
-		g_castling = castling;
-		g_enpassant = enpassant;
-		g_zobrist = zobrist;
+		takeMove(move, q, castling, enpassant, zobrist, val);
 	    }
 	}
 
